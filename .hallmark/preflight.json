@@ -1,0 +1,11 @@
+{
+  "scannedAt": "2026-09-30",
+  "framework": { "name": "Next.js App Router", "version": "16.3.7", "source": "package.json:17" },
+  "fonts": { "stack": "System sans-serif", "source": "app/globals.css:15" },
+  "palette": { "description": "Dark gray surfaces, purple primary, green progress", "source": "app/globals.css:1-13" },
+  "motion": { "stance": "motion-cut", "library": null, "source": "package.json:15-23" },
+  "spacing": { "scale": null, "source": "app/globals.css" },
+  "lockedDesignSystem": null,
+  "preserve": ["Authentication", "Per-user PostgreSQL progress", "Canonical curriculum", "Existing routes"],
+  "requestedChanges": ["Question practice journal", "Clean modern minimalist UI"]
+}
