@@ -8,7 +8,7 @@ A Next.js (App Router + TypeScript) version of the A2Z sheet, with email/passwor
 - Mark problems solved/unsolved; progress belongs to the signed-in user and survives reloads, sign-outs, and container restarts.
 - Overall, step, and sub-step progress counters; expandable sections; search and solved/unsolved filters.
 - A private **Practice journal** at `/journal`: log repeat attempts, outcomes, time spent, confidence, approach notes, mistakes, and optional revision dates.
-- Per-question history from each roadmap row, searchable attempt history, and a due/upcoming revision queue.
+- Per-question history from each roadmap row, custom problems with their own links, searchable attempt history, and a due/upcoming revision queue.
 - A warm, light workspace with self-hosted Geist, desktop side navigation, and stacked question rows on mobile.
 - Guests can browse resources but cannot modify progress or read private journals.
 - Optimistic updates with pending indicators and rollback/error messages when saves fail.
@@ -75,7 +75,7 @@ Use the configured hostname consistently: `localhost` and `127.0.0.1` are differ
 
 ## Practice journal
 
-Open **Practice journal → Log attempt**, or use **Journal ↗** beside a roadmap question to open that question’s history. Select a question and record:
+Open **Practice journal → Log attempt**, or use **Journal ↗** beside a roadmap question to open that question’s history. Select a roadmap or previously added custom problem, or choose **Add custom problem** and provide its name and problem link. Then record:
 
 - Practice date; outcome (still working on it / solved with help / solved independently).
 - Optional time spent (1–1440 minutes) and confidence (1–5).
@@ -95,7 +95,7 @@ The Notion link supplied as inspiration was a JavaScript-only shell when inspect
 - Better Auth manages users, hashed passwords (scrypt), database sessions, and auth rate-limit records. Passwords are never stored as plaintext.
 - Session cookies are HTTP-only and SameSite=Lax. Sessions expire after seven days, refresh periodically, and are revoked server-side on sign-out. Cookie caching is disabled, so APIs always validate sessions against PostgreSQL.
 - `problems` stores the stable topic IDs from `a2z.json`. `problem_progress` stores `(user_id, problem_id, solved_at)` with a composite primary key and foreign keys. A row means solved; unsolving deletes that user's row only.
-- `practice_attempts` stores user-owned repeated attempts, notes, dates, and optimistic-concurrency versions. Migration `002_practice_journal.sql` is additive; existing accounts and solved progress are unchanged.
+- `practice_attempts` stores user-owned repeated attempts, notes, dates, and optimistic-concurrency versions. Custom problems are private `problems` rows with an owner and an HTTP(S) link; they never appear in roadmap progress. Migrations `002_practice_journal.sql` and `003_custom_journal_problems.sql` are additive; existing accounts and solved progress are unchanged.
 - Progress and journal APIs derive the user ID from the session, never from request input. Requests use parameterized queries and validate problem IDs and booleans. Writes require the configured same-origin `Origin` header.
 - Auth attempts are rate-limited in PostgreSQL, including five sign-in/sign-up requests per minute per client IP. Application restarts do not reset the limiter.
 

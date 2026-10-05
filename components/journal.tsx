@@ -13,6 +13,7 @@ export function Journal({ initialAttempts, initialProblem, topics, user }: {
   initialAttempts: Attempt[]; initialProblem: string; topics: JournalTopic[]; user: WorkspaceUser | null;
 }) {
   const [attempts, setAttempts] = useState(initialAttempts);
+  const [availableTopics, setAvailableTopics] = useState(topics);
   const [tab, setTab] = useState<"history" | "revision">("history");
   const [search, setSearch] = useState("");
   const [outcome, setOutcome] = useState("all");
@@ -26,7 +27,7 @@ export function Journal({ initialAttempts, initialProblem, topics, user }: {
   const [message, setMessage] = useState("");
   const [visibleCount, setVisibleCount] = useState(30);
   const revision = useRef(0);
-  const topicMap = new Map(topics.map((topic) => [topic.id, topic]));
+  const topicMap = new Map(availableTopics.map((topic) => [topic.id, topic]));
   const scopedTopic = topicMap.get(initialProblem);
 
   useEffect(() => {
@@ -44,7 +45,10 @@ export function Journal({ initialAttempts, initialProblem, topics, user }: {
         const response = await fetch("/api/journal", { cache: "no-store" });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || "Unable to refresh journal.");
-        if (current === revision.current) setAttempts(data.attempts);
+        if (current === revision.current) {
+          setAttempts(data.attempts);
+          setAvailableTopics((existing) => [...existing.filter((topic) => !topic.custom), ...(data.problems ?? [])]);
+        }
       } catch (error) {
         if (current === revision.current) setError(error instanceof Error ? error.message : "Unable to refresh journal.");
       }
@@ -59,11 +63,12 @@ export function Journal({ initialAttempts, initialProblem, topics, user }: {
     setDraft({ id: crypto.randomUUID(), problemId });
     setMessage("");
   }
-  function saved(attempt: Attempt) {
+  function saved(attempt: Attempt, problem?: JournalTopic) {
     revision.current++;
     setAttempts((current) => [attempt, ...current.filter((item) => item.id !== attempt.id)]);
+    if (problem) setAvailableTopics((current) => [...current.filter((item) => item.id !== problem.id), problem]);
     setError("");
-    setMessage("Attempt saved.");
+    setMessage(problem ? "Custom problem and attempt saved." : "Attempt saved.");
   }
   async function mutate(attempt: Attempt, method: "PATCH" | "DELETE") {
     if (pendingRef.current) return;
@@ -114,7 +119,8 @@ export function Journal({ initialAttempts, initialProblem, topics, user }: {
             const isDue = Boolean(today && attempt.nextReviewOn && attempt.nextReviewOn <= today);
             return <article className="attempt-row" key={attempt.id}>
               <div className="attempt-date"><time dateTime={tab === "revision" ? attempt.nextReviewOn! : attempt.practicedOn}>{formatDate(tab === "revision" ? attempt.nextReviewOn! : attempt.practicedOn)}</time>{tab === "revision" && <small className={isDue ? "due-label" : ""}>{isDue ? "Due for revision" : "Upcoming"}</small>}</div>
-              <div className="attempt-content"><Link className="question-link" href={`/journal?problem=${encodeURIComponent(attempt.problemId)}`}>{topic?.question_title ?? attempt.problemId}</Link>
+              <div className="attempt-content"><div className="attempt-question"><Link className="question-link" href={`/journal?problem=${encodeURIComponent(attempt.problemId)}`}>{topic?.question_title ?? attempt.problemId}</Link>
+                {topic?.problemLink && <a className="external-problem-link" href={topic.problemLink} target="_blank" rel="noreferrer">Open problem ↗</a>}</div>
                 <div className="attempt-meta"><span className={`outcome outcome-${attempt.outcome}`}>{outcomeLabels[attempt.outcome]}</span><span>{attempt.durationMinutes === null ? "Time not recorded" : `${attempt.durationMinutes} min`}</span><span>Confidence {attempt.confidence}/5</span></div>
                 {(attempt.approach || attempt.mistakes) ? <details className="attempt-notes"><summary>Read notes</summary>{attempt.approach && <div><h3>Approach & notes</h3><p>{attempt.approach}</p></div>}{attempt.mistakes && <div><h3>Mistakes & takeaways</h3><p>{attempt.mistakes}</p></div>}</details> : <small>No notes recorded.</small>}
                 {tab === "history" && attempt.nextReviewOn && <small className="attempt-review">Revision set for {formatDate(attempt.nextReviewOn)}</small>}
@@ -129,6 +135,6 @@ export function Journal({ initialAttempts, initialProblem, topics, user }: {
         </>}
       <footer>Private notes. Persistent progress. One question at a time.</footer>
     </main>
-    {draft && <AttemptEditor key={draft.id} draft={draft} topics={topics} onClose={() => { revision.current++; setDraft(null); }} onSaved={saved} />}
+    {draft && <AttemptEditor key={draft.id} draft={draft} topics={availableTopics} onClose={() => { revision.current++; setDraft(null); }} onSaved={saved} />}
   </div>;
 }

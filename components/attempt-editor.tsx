@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { createAttemptSchema, localToday, outcomeLabels, type Attempt, type AttemptFields } from "@/lib/journal-schema";
+import { createAttemptRequestSchema, localToday, outcomeLabels, type Attempt, type AttemptFields } from "@/lib/journal-schema";
 
-export type JournalTopic = { id: string; question_title: string; difficulty: number | null };
+export type JournalTopic = { id: string; question_title: string; difficulty: number | null; problemLink: string | null; custom: boolean };
 export type Draft = { id: string; attempt?: Attempt; problemId: string };
 
 export function AttemptEditor({ draft, topics, onClose, onSaved }: {
-  draft: Draft; topics: JournalTopic[]; onClose: () => void; onSaved: (attempt: Attempt) => void;
+  draft: Draft; topics: JournalTopic[]; onClose: () => void; onSaved: (attempt: Attempt, problem?: JournalTopic) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [busy, setBusy] = useState(false);
@@ -15,6 +15,9 @@ export function AttemptEditor({ draft, topics, onClose, onSaved }: {
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState("");
   const [questionSearch, setQuestionSearch] = useState("");
+  const [customMode, setCustomMode] = useState(false);
+  const [customTitle, setCustomTitle] = useState("");
+  const [customLink, setCustomLink] = useState("");
   const [fields, setFields] = useState<AttemptFields>(() => draft.attempt ?? {
     problemId: draft.problemId, practicedOn: localToday(), outcome: "struggled", durationMinutes: null,
     confidence: 3, approach: "", mistakes: "", nextReviewOn: null,
@@ -44,7 +47,10 @@ export function AttemptEditor({ draft, topics, onClose, onSaved }: {
       durationMinutes: fields.durationMinutes, confidence: fields.confidence,
       approach: fields.approach, mistakes: fields.mistakes, nextReviewOn: fields.nextReviewOn,
     };
-    const parsed = createAttemptSchema.safeParse({ ...payload, id: draft.id });
+    const parsed = createAttemptRequestSchema.safeParse({
+      ...payload, id: draft.id,
+      customProblem: customMode ? { title: customTitle, link: customLink } : undefined,
+    });
     if (!parsed.success) { setError(parsed.error.issues[0]?.message || "Check the attempt fields."); return; }
     busyRef.current = true;
     setBusy(true);
@@ -52,27 +58,44 @@ export function AttemptEditor({ draft, topics, onClose, onSaved }: {
     try {
       const response = await fetch(draft.attempt ? `/api/journal/${draft.id}` : "/api/journal", {
         method: draft.attempt ? "PUT" : "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...payload, ...(draft.attempt ? { version: draft.attempt.version } : { id: draft.id }) }),
+        body: JSON.stringify({
+          ...payload,
+          ...(draft.attempt ? { version: draft.attempt.version } : { id: draft.id, ...(customMode ? { customProblem: { title: customTitle.trim(), link: customLink } } : {}) }),
+        }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Unable to save this attempt.");
       setDirty(false);
-      onSaved(data.attempt);
+      onSaved(data.attempt, data.problem);
       dialog.current?.close();
       onClose();
     } catch (error) { setError(`${error instanceof Error ? error.message : "Unable to reach the server."} Your notes are still here.`); }
     finally { busyRef.current = false; setBusy(false); }
   }
   const choices = topics.filter((topic) => topic.id === fields.problemId || topic.question_title.toLowerCase().includes(questionSearch.toLowerCase()));
+  const selectedProblem = topics.find((topic) => topic.id === fields.problemId);
+  function startCustomProblem() {
+    setCustomMode(true);
+    setDirty(true);
+    setFields((current) => ({ ...current, problemId: crypto.randomUUID() }));
+  }
   return <dialog className="attempt-dialog" ref={dialog} aria-labelledby="attempt-title" onCancel={(event) => { event.preventDefault(); close(); }}>
     <div className="dialog-heading"><h2 id="attempt-title">{draft.attempt ? "Edit attempt" : "Log an attempt"}</h2><button type="button" onClick={close} disabled={busy}>Close</button></div>
     <p className="muted">Capture what you tried, not just whether it passed.</p>
     <form onSubmit={submit} aria-busy={busy} aria-describedby="attempt-feedback">
       <fieldset disabled={busy}>
-        <label>Find a question<input type="search" value={questionSearch} onChange={(event) => setQuestionSearch(event.target.value)} placeholder="Search the 455 questions…" /></label>
-        <label>Question<select required value={fields.problemId} onChange={(event) => change("problemId", event.target.value)}>
-          <option value="" disabled>Select a question</option>{choices.map((topic) => <option key={topic.id} value={topic.id}>{topic.question_title}</option>)}
-        </select></label>
+        {!customMode ? <>
+          <label>Find a question<input type="search" value={questionSearch} onChange={(event) => setQuestionSearch(event.target.value)} placeholder="Search roadmap and custom problems…" /></label>
+          <label>Question<select required value={fields.problemId} onChange={(event) => change("problemId", event.target.value)}>
+            <option value="" disabled>Select a question</option>{choices.map((topic) => <option key={topic.id} value={topic.id}>{topic.question_title}{topic.custom ? " · Custom" : ""}</option>)}
+          </select></label>
+          {selectedProblem?.problemLink && <a className="problem-preview-link" href={selectedProblem.problemLink} target="_blank" rel="noreferrer">Open problem ↗</a>}
+          {!draft.attempt && <div className="custom-problem-prompt"><span>Not on the sheet?</span><button type="button" onClick={startCustomProblem}>Add custom problem</button></div>}
+        </> : <div className="custom-problem-fields">
+          <div className="custom-problem-heading"><strong>Custom problem</strong><button type="button" className="text-button" onClick={() => { setCustomMode(false); change("problemId", draft.problemId); }}>Choose from list</button></div>
+          <label>Problem name<input required maxLength={200} value={customTitle} onChange={(event) => { setDirty(true); setCustomTitle(event.target.value); }} placeholder="e.g. Merge Intervals" /></label>
+          <label>Problem link<input type="url" required maxLength={2048} value={customLink} onChange={(event) => { setDirty(true); setCustomLink(event.target.value); }} placeholder="https://leetcode.com/problems/…" /></label>
+        </div>}
         <div className="form-grid">
           <label>Practice date<input type="date" required min="1900-01-01" max="2100-12-31" value={fields.practicedOn} onChange={(event) => change("practicedOn", event.target.value)} /></label>
           <label>Time spent (minutes)<input type="number" min={1} max={1440} step={1} placeholder="Optional" value={fields.durationMinutes ?? ""} onChange={(event) => change("durationMinutes", event.target.value ? Number(event.target.value) : null)} /></label>

@@ -1,8 +1,7 @@
 import { z } from "zod";
 import { HttpError, readBody, withUser } from "@/lib/api";
-import { clearRevision, deleteAttempt, updateAttempt } from "@/lib/journal";
+import { assertProblemAccess, clearRevision, deleteAttempt, updateAttempt } from "@/lib/journal";
 import { updateAttemptSchema, versionSchema } from "@/lib/journal-schema";
-import { problemIds } from "@/lib/roadmap";
 
 export const runtime = "nodejs";
 type Context = { params: Promise<{ id: string }> };
@@ -17,7 +16,7 @@ export async function PUT(request: Request, context: Context) {
     const parsed = updateAttemptSchema.safeParse(await readBody(request));
     if (!parsed.success) throw new HttpError(400, parsed.error.issues[0]?.message || "Check the attempt fields.");
     const { version, ...data } = parsed.data;
-    if (!problemIds.has(data.problemId)) throw new HttpError(400, "Choose a question from the roadmap.");
+    await assertProblemAccess(userId, data.problemId);
     return { attempt: await updateAttempt(userId, id, version, data) };
   });
 }

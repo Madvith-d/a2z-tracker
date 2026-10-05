@@ -264,6 +264,22 @@ test("API validates ownership, origins, input, duplicate writes and revoked sess
     expect(persisted.confidence).toBe(5);
     expect((await a.delete(`/api/journal/${entry.id}`, { data: { version: 3 } })).ok()).toBe(true);
     expect((await (await a.get("/api/journal")).json()).attempts).toEqual([]);
+
+    const customPayload = {
+      ...payload, id: randomUUID(), problemId: randomUUID(),
+      customProblem: { title: "Private graph problem", link: "https://example.com/problems/private-graph" },
+    };
+    const customCreated = await a.post("/api/journal", { data: customPayload });
+    expect(customCreated.ok(), await customCreated.text()).toBe(true);
+    const customResult = await customCreated.json();
+    expect(customResult.problem).toMatchObject({ id: customPayload.problemId, question_title: "Private graph problem", problemLink: customPayload.customProblem.link, custom: true });
+    expect((await a.post("/api/journal", { data: customPayload })).ok()).toBe(true);
+    const customJournal = await (await a.get("/api/journal")).json();
+    expect(customJournal.problems).toEqual([customResult.problem]);
+    expect(customJournal.attempts).toHaveLength(1);
+    expect((await b.post("/api/journal", { data: { ...customPayload, id: randomUUID(), customProblem: undefined } })).status()).toBe(400);
+    expect((await b.post("/api/journal", { data: { ...customPayload, id: randomUUID() } })).status()).toBe(409);
+    expect((await a.delete(`/api/journal/${customResult.attempt.id}`, { data: { version: 1 } })).ok()).toBe(true);
     expect((await (await a.get("/api/progress")).json()).solvedIds).toEqual(["dttyps", "srinpttpt"]);
 
     expect((await a.post("/api/auth/sign-out", { headers: { origin: "https://evil.example" }, data: {} })).status()).toBe(403);

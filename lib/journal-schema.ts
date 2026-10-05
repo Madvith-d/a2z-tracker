@@ -15,6 +15,19 @@ export const attemptFields = z.object({
 const reviewAfterPractice = (value: z.infer<typeof attemptFields>) => !value.nextReviewOn || value.nextReviewOn >= value.practicedOn;
 export const createAttemptSchema = attemptFields.extend({ id: z.uuid() }).strict()
   .refine(reviewAfterPractice, { message: "Revision date must be on or after the practice date.", path: ["nextReviewOn"] });
+export const customProblemSchema = z.object({
+  title: z.string().trim().min(1, "Enter a problem name.").max(200),
+  link: z.url("Enter a valid problem link.").max(2048).refine((value) => ["http:", "https:"].includes(new URL(value).protocol), "Use an http or https link."),
+}).strict();
+export const createAttemptRequestSchema = z.object({
+  id: z.uuid(),
+  ...attemptFields.shape,
+  customProblem: customProblemSchema.nullish(),
+}).strict()
+  .refine(reviewAfterPractice, { message: "Revision date must be on or after the practice date.", path: ["nextReviewOn"] })
+  .refine((value) => !value.customProblem || z.uuid().safeParse(value.problemId).success, {
+    message: "Invalid custom problem ID.", path: ["problemId"],
+  });
 export const updateAttemptSchema = attemptFields.extend({ version: z.number().int().positive() }).strict()
   .refine(reviewAfterPractice, { message: "Revision date must be on or after the practice date.", path: ["nextReviewOn"] });
 export const versionSchema = z.object({ version: z.number().int().positive() }).strict();

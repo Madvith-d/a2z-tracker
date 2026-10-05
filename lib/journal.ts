@@ -1,6 +1,9 @@
 import { db } from "./db";
 import { HttpError } from "./api";
+import type { PoolClient } from "pg";
 import type { Attempt, AttemptFields } from "./journal-schema";
+
+export type CustomProblem = { id: string; question_title: string; difficulty: null; problemLink: string; custom: true };
 
 const columns = `id, problem_id AS "problemId", practiced_on::text AS "practicedOn", outcome,
   duration_minutes AS "durationMinutes", confidence, approach, mistakes,
@@ -13,21 +16,54 @@ export async function getAttempts(userId: string): Promise<Attempt[]> {
     ORDER BY practiced_on DESC, created_at DESC, id DESC`, [userId]);
   return result.rows;
 }
+export async function getCustomProblems(userId: string): Promise<CustomProblem[]> {
+  const result = await db.query<CustomProblem>(`SELECT id, title AS question_title, NULL::integer AS difficulty,
+    problem_link AS "problemLink", true AS custom FROM problems WHERE user_id=$1 ORDER BY title, id`, [userId]);
+  return result.rows;
+}
+export async function assertProblemAccess(userId: string, problemId: string) {
+  const result = await db.query("SELECT 1 FROM problems WHERE id=$1 AND (user_id IS NULL OR user_id=$2)", [problemId, userId]);
+  if (!result.rowCount) throw new HttpError(400, "Choose a roadmap problem or one of your custom problems.");
+}
 function values(data: AttemptFields) {
   return [data.problemId, data.practicedOn, data.outcome, data.durationMinutes, data.confidence, data.approach, data.mistakes, data.nextReviewOn];
 }
-export async function createAttempt(userId: string, id: string, data: AttemptFields) {
-  const result = await db.query<Attempt>(`INSERT INTO practice_attempts
+async function insertAttempt(query: Pick<PoolClient, "query">, userId: string, id: string, data: AttemptFields) {
+  const result = await query.query<Attempt>(`INSERT INTO practice_attempts
     (user_id, id, problem_id, practiced_on, outcome, duration_minutes, confidence, approach, mistakes, next_review_on)
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT (id) DO NOTHING RETURNING ${columns}`, [userId, id, ...values(data)]);
   if (result.rows[0]) return result.rows[0];
   // Retrying a POST after a lost response is idempotent, never a second attempt.
-  const existing = await db.query<Attempt>(`SELECT ${columns} FROM practice_attempts WHERE user_id=$1 AND id=$2`, [userId, id]);
+  const existing = await query.query<Attempt>(`SELECT ${columns} FROM practice_attempts WHERE user_id=$1 AND id=$2`, [userId, id]);
   const attempt = existing.rows[0];
   if (!attempt || Object.keys(data).some((key) => key in attempt && data[key as keyof AttemptFields] !== attempt[key as keyof AttemptFields])) {
     throw new HttpError(409, "This attempt ID is already in use. Reload the journal before trying again.");
   }
   return attempt;
+}
+export async function createAttempt(userId: string, id: string, data: AttemptFields) {
+  return insertAttempt(db, userId, id, data);
+}
+export async function createAttemptWithCustomProblem(userId: string, id: string, data: AttemptFields, custom: { title: string; link: string }) {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`INSERT INTO problems (id, title, user_id, problem_link) VALUES ($1,$2,$3,$4)
+      ON CONFLICT (id) DO NOTHING`, [data.problemId, custom.title, userId, custom.link]);
+    const problem = await client.query<{ title: string; problemLink: string }>(`SELECT title, problem_link AS "problemLink"
+      FROM problems WHERE id=$1 AND user_id=$2`, [data.problemId, userId]);
+    if (!problem.rows[0] || problem.rows[0].title !== custom.title || problem.rows[0].problemLink !== custom.link) {
+      throw new HttpError(409, "This custom problem ID is already in use. Try adding it again.");
+    }
+    const attempt = await insertAttempt(client, userId, id, data);
+    await client.query("COMMIT");
+    return { attempt, problem: { id: data.problemId, question_title: custom.title, difficulty: null, problemLink: custom.link, custom: true as const } };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 export async function updateAttempt(userId: string, id: string, version: number, data: AttemptFields) {
   const result = await db.query<Attempt>(`UPDATE practice_attempts SET problem_id=$3, practiced_on=$4,
